@@ -68,9 +68,10 @@ $ python concordance.py input.txt output.txt
 
 7.  When the concordance program is done running, it will print success.  Check out the output file to see the generated content.
 
-```
+
+# Bragging Rights
 On a low memory machine, this concordance generator was able to produce a concordance for a 350 page book in under a minute!
-```
+
 
 # How we solved it
 
