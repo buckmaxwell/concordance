@@ -69,23 +69,26 @@
 #     feature of spaCy.
 
 from datetime import datetime
-from multiprocessing.dummy import Pool as ThreadPool 
+from multiprocessing.dummy import Pool as ThreadPool
+from helpers import read_in_chunks, get_connection
 from uuid import uuid4
+from constants import *
+import requests
+import time
+import pika
 import sys
 import sqlite3
 import spacy
 import logging
 import math
 import os
+import json
 
-# CONSTANTS
-BULK_INSERT_SIZE = 2500 # (rows)
-NUMBER_OF_THREADS = 4 # max 10
-CHUNK_SIZE = 1024
 
-logging.basicConfig(level=logging.DEBUG)
+
+
+logging.basicConfig(level=logging.INFO)
 pool = ThreadPool(NUMBER_OF_THREADS) # create threadpool
-#results = pool.map(add_word, nlp(sentence))
 
 def get_database_names():
     """Return a list of database names"""
@@ -93,16 +96,6 @@ def get_database_names():
     for thread_no in range(0, NUMBER_OF_THREADS):
         result.append('bridgewater{}.db'.format(thread_no + 1))
     return sorted(result)
-
-
-def get_connection(file_no=1, db_name=None):
-    """Get a connection to the database"""
-
-    if not db_name: # TODO: does this follow DRY?
-        db_name = 'bridgewater{}.db'.format(file_no)
-
-    conn = sqlite3.connect(db_name)
-    return conn
 
 
 def create_words_tables(databases):
@@ -115,18 +108,6 @@ def create_words_tables(databases):
         cursor.execute('''DROP INDEX IF EXISTS word_index''')
         connection.commit()
         connection.close()
-    return True
-
-
-def insert_word_rows(connection, word_rows):
-    """
-    Insert words into database in a bulk insert.
-
-    word_rows = [(word, sentence_no, file_no), (word, sentence_no, file_no), ...]
-
-    """
-    connection.executemany('''INSERT INTO words VALUES (?,?,?)''', word_rows)
-    connection.commit()
     return True
 
 
@@ -168,83 +149,6 @@ def add_index_to_db(cursor):
     cursor.execute('''CREATE INDEX word_index on words (word);''') 
     return True
 
-
-def read_in_chunks(file_object, chunk_size=CHUNK_SIZE):
-    """Generator to read a file piece by piece."""
-    while True:
-        data = file_object.read(chunk_size)
-        if not data:
-            break
-        yield data
-
-
-def add_sentence_to_word_rows(sentence, word_rows, sentence_no, file_no):
-
-    for token in nlp(sentence):
-        # make sure token is not punctuation
-        if (len(token) == 1 and token.pos_ == 'PUNCT') or (len(token) == 3 and token.pos_ == 'PUNCT'):
-            continue
-        else: # token is word
-            # standard case the word and remove whitespace
-            word = str(token).lower().strip()
-            # add the word to batch insert list (if word is not the empty string)
-            if word:
-                word_rows.append([word, sentence_no, file_no])
-
-    return True
-
-
-def add_data_to_db(filename_and_file_no):
-    """
-    kwargs are filename and file_no
-    Read data from file and populate words table - returns number of sentences analyzed
-    """
-    filename, file_no = filename_and_file_no
-    connection = get_connection(file_no=file_no)
-    
-    with open(filename, 'r') as f:
-
-        # final sentence may not be a complete sentence, save and prepend to next chunk
-        leftovers = ''
-        sentence_no = 0
-        # store batch word inserts here
-        word_rows = []
-
-        for chunk in read_in_chunks(f): # lazy way of reading our file in case it's large
-
-            # prepend leftovers to chunk
-            chunk = leftovers + chunk
-
-            # run nlp
-            chunk_doc = nlp(chunk)
-            # tokenized sentences from chunk
-            sents = [sent.string.strip() for sent in chunk_doc.sents]
-
-            # save for next chunk
-            leftovers = sents[-1]
-
-            for s in sents[:-1]:
-                sentence_no += 1
-                # add sentence to db
-                add_sentence_to_word_rows(s, word_rows, sentence_no, file_no)
-            
-            if len(word_rows) >= BULK_INSERT_SIZE:
-                insert_word_rows(connection, word_rows)
-                del word_rows[:] # saves us the pain of reassigning and waiting for a garbage collector
-
-
-    if word_rows: # insert leftovers into word rows, then left over word rows into db
-        sentence_no += 1
-        add_sentence_to_word_rows(leftovers, word_rows, sentence_no, file_no)
-        insert_word_rows(connection, word_rows)
-
-
-    # insert final 'fake' word row # TODO: this is odd
-    insert_word_rows(connection, [['z'*25, 0, file_no]])
-
-    connection.commit()
-    connection.close()
-    return sentence_no
 
 def integer_to_letter(integer):
     """Solution for properly numbering a file alphabetically"""
@@ -364,14 +268,54 @@ if __name__ == '__main__':
 
     logging.info('Splitting files for multithreading...')
     filenames = split_file(filename)
+    '''
+    REMOVE
     filenames_to_sentences = {}
     for fn in filenames:
         filenames_to_sentences[fn] = None
+    '''
 
 
     logging.info('Adding data to database...')
-    file_info_arrays = [(fn, int(fn.split('.')[-1])) for fn in filenames]
-    sentences = pool.map(add_data_to_db, file_info_arrays)
+    # use message passing so that different workers can share work
+
+    # publish filenames to filename queue
+    connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+    channel = connection.channel()
+    channel.basic_qos(prefetch_count=1)
+
+    q = channel.queue_declare(queue='filename_queue')
+    for fn in filenames:
+        channel.basic_publish(exchange='', routing_key='filename_queue', body=fn)
+
+    
+    # Unacknowledged message count?
+    #print(q.method.consumer_count)
+    #while q.method.consumer_count > 0:
+    #    time.sleep(1)
+
+    # wait until all workers are finished
+    #r = requests.get('http://guest:guest@localhost:15672/api/queues/%2f/filename_queue')
+    #unacked = json.loads(r.text)['messages_unacknowledged_ram']
+    #while unacked > 0:
+    #    time.sleep(2)
+    #    r = requests.get('http://guest:guest@localhost:15672/api/queues/%2f/filename_queue')
+    #    unacked = json.loads(r.text)['messages_unacknowledged_ram']
+
+    completed = 0
+    sentences = []
+    q = channel.queue_declare(queue='completed')
+    while completed < len(filenames):
+        method_frame, header_frame, body = channel.basic_get('completed')
+        if method_frame:
+            completed += 1
+            sentences.append(int(body))
+            channel.basic_ack(method_frame.delivery_tag)
+        else:
+            pass # no message returned
+            time.sleep(2)
+
+
 
     logging.info('Combining database files...')
     main_db_name = combine_database_files(database_names)
@@ -391,5 +335,5 @@ if __name__ == '__main__':
     conn.close() # close db connection
 
     total_time = round((datetime.now() - start_time).total_seconds(), 2)
-    print('success!!\n\nAnalyzed {} sentences in {} seconds.'.format(sum(sentences), total_time))
+    print('success!!\n\nFinished in {} seconds.'.format(total_time))
 
