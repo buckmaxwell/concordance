@@ -1,73 +1,5 @@
 #!/usr/bin/env python3.6
 
-
-# sort words alphabetically, keeping track of sentence and number of occurrences
-
-# using a binary search tree, we could store an alphabetical list that stays in 
-# alphabetical order. We'd have to balance it occasionally (maybe use red and black
-# trees) on each of the nodes we could store a word, the number of occurrences,
-# and a list of places it occurs (sentence numbers).
-
-# advantages
-#  - speedy printing in alphabetical order
-#  - low-ish memory footprint
-#  - relatively fast time to add 
-
-# the data structure we need is called a TreeMap in java
-# - implements red and black trees
-# - stores inputs in sorted order
-# - maps values to keys -- our key will be a list of sentence numbers [1,1,2]
-
-
-# OrderedDict (remembers order added); like LinkedHashMap in java
-# Can be used in  conjunction with sorting to make a sorted dictionary
-# OrderedDict(sorted(d.items(), key=lambda t: t[0]))
-
-# Problem? Memory footprint could be huge for large inputs
-# storing all encountered words in memory could crash the computer if input size is 
-# arbitrarilty large.  Storing in database could work, but has the overhead of 
-# needing a database.  SQLite provides a solution that can be packaged with our program
-# and still can provide fast times for row adds, lookups, and updates to our concordance.
-# an order by clause can spit out our data in alphabetical order.
-
-# If we keep an index on the key, the order by clause will be very quick, however,
-# starting with an index on the word/key will significantly slow down writes to our 
-# database.  To speed up writes, we could not index until the end, allowing us to spit the
-# words back out quickly....
-
-# Problem is, if we need to update a words count and our values are not indexed, a lookup 
-# will be very expensive O(N) time! A full table scan.
-
-# Instead, it is sensible to write lines with no indexes that look like
-
-# |     word      |   sentence_no   |
-# | flabbergasted | 3               |
-# |     good      | 3               |
-# | flabbergasted | 4               |
-# |     jim       | 4               |
-
-# We can do one more thing to optimize write speed, and that is bulk transactions
-# 
-# From the SQLite optimization FAQ: 
-#
-# `Unless already in a transaction, each SQL statement has a new transaction started
-# for it. This is very expensive, since it requires reopening, writing to, and closing the
-# journal file for each statement. This can be avoided by wrapping sequences of SQL
-# statements with BEGIN TRANSACTION; and END TRANSACTION; statements. This speedup is also
-# obtained for statements which don't alter the database.`
-
-# NOTES
-
-#  - This program considers contractions to be multiple words (meaningwise, they are).
-#    different tokenizers handle this problem differently.  We use spaCy, a common 
-#    alternative is NLTK.  Both solutions could work, but we choose spaCy because it's
-#    much speedier at tokenizing words (our primary use case).
-#    
-#    [graphic](timing.png)
-# 
-#     Contractions could be handled differently by providing special cases, a built-in
-#     feature of spaCy.
-
 from datetime import datetime
 from multiprocessing.dummy import Pool as ThreadPool
 from helpers import read_in_chunks, get_connection
@@ -83,7 +15,6 @@ import logging
 import math
 import os
 import json
-
 
 
 

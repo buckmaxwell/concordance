@@ -1,3 +1,7 @@
+
+# The Problem
+
+```
 Generate a Concordance 
 
 Given an arbitrary text document written in English, write a program that will generate 
@@ -39,3 +43,74 @@ ee. with                    {2:1,2}
 ff. word                    {3:1,1,2}
 gg. write                   {1:1}
 hh. written                 {1:1}
+```
+
+
+# Getting Set Up
+
+1. Install rabbitmq server - see http://www.rabbitmq.com/
+2. Install virtualenv
+3. Install python requirements
+
+```sh
+$ pip install -r requirements.txt
+```
+
+4. Start rabbitmq server
+5. Start a few workers, background them with nohup or run them in the terminal to see output and progress
+```sh
+$ python add_data_worker.py
+```
+6. Start the concordance program, suppy input filename and output filename
+```sh
+$ python concordance.py input.txt output.txt
+```
+
+7.  When the concordance program is done running, it will print success.  Check out the output file to see the generated content.
+
+
+# How we solved it
+
+This problem may appear trivial on the surface, and it is for small inputs.  But imagine when the input gets
+very large -- say the Encyclopedia Britanica.  By taking the approach we did, we made it so this program can 
+handle large documents, but it also slows down the process for smaller documents - namely because the process
+of loading libraries like pika, and passing messages slows things down.
+
+# Using spaCy
+
+There are many choices for natural language processing.  NLTK is a popular one, as is spaCy.  We went with spacy for its speed benefits over NLTK, pictured below.
+
+[graphic](timing.png)
+
+NOTE: Natural language processors make different decisions about contractions.  Both spaCy and NLTK choose
+to handle contractions as multiple words, because contractions are really, two words.  We have chosen to 
+follow that lead.
+
+## Using SQLite 
+
+In order to handle this problem efficiently for any size input, one data structure that comes to mind is the 
+Binary Tree.  By using an optimization that keeps our tree balanced, like Red and Black trees, we can keep
+our information in alphabetical order as we add to it, avoiding costly sorting later. Java has a built in 
+TreeMap which would be exactly what we need, save for one thing.  The cost of storing the Encyclopedia in
+memory would be high, and on lots of computers, impossible.
+
+In order to deal with the problem, we make use of SQLite, a file that acts as a database.  It features quick
+read, write, and lookup times and uses a binary tree on indexed values.  We create a database, add our values,
+and only right before printing, add our index (adding an index at the beginning increases write times).
+
+
+## Creating a distributed system
+
+After solving the memory problems associated with large inputs we now have speed to consider again. Because of our smart choices as far as our algorithms are considered, even decent sized documents can be produce a
+concordance pretty quickly.  That said, what about HUGE documents?
+
+In order to deal with documents of any size, it makes sense that separate workers could handle the time intensive task of using spaCy to tokenize words and sentences. Just one problem though - we still need to keep
+track of sentence numbers.  By dividing our file into a set number of smaller files, and remembering the order
+of the files, we can have workers write to separate databases for each file chunk (sqlite does not support
+multiple db connections), and then combine our databases in a way that preserves this information.  Yay.
+
+By using a message passing system (rabbitmq) we allow our workers to potentially live in different places from
+one another.  We also allow ourselves to "infinitely" scale.  In reality, we are currently inhibited by the 
+number 10, the number of databases sqlite allows you to attach to a database.  If 10 was ever not enough,
+moving off of sqlite to a production database would be the correct move. For now though, SQLite has the advantage of ease.
+
