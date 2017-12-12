@@ -49,7 +49,7 @@ hh. written                 {1:1}
 # Getting Set Up
 
 1. Install rabbitmq server - see http://www.rabbitmq.com/
-2. Install virtualenv
+2. Install virtualenv and run a virtual environment with python 3.6-- optional, but helpful
 3. Install python requirements
 
 ```sh
