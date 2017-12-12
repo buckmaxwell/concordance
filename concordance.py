@@ -70,30 +70,51 @@
 
 from datetime import datetime
 from multiprocessing.dummy import Pool as ThreadPool 
-#from nltk.tokenize import sent_tokenize
+from uuid import uuid4
 import sys
 import sqlite3
 import spacy
 import logging
 import math
-
-logging.basicConfig(level=logging.DEBUG)
-pool = ThreadPool(10) # create threadpool
+import os
 
 # CONSTANTS
 BULK_INSERT_SIZE = 2500 # (rows)
+NUMBER_OF_THREADS = 4 # max 10
+CHUNK_SIZE = 1024
 
-def get_connection():
+logging.basicConfig(level=logging.DEBUG)
+pool = ThreadPool(NUMBER_OF_THREADS) # create threadpool
+#results = pool.map(add_word, nlp(sentence))
+
+def get_database_names():
+    """Return a list of database names"""
+    result = []
+    for thread_no in range(0, NUMBER_OF_THREADS):
+        result.append('bridgewater{}.db'.format(thread_no + 1))
+    return sorted(result)
+
+
+def get_connection(file_no=1, db_name=None):
     """Get a connection to the database"""
-    conn = sqlite3.connect('bridgewater.db')
+
+    if not db_name: # TODO: does this follow DRY?
+        db_name = 'bridgewater{}.db'.format(file_no)
+
+    conn = sqlite3.connect(db_name)
     return conn
 
 
-def create_words_table(cursor):
+def create_words_tables(databases):
     """Create the table to store the words"""
-    cursor.execute('''CREATE TABLE IF NOT EXISTS words( word TEXT, sentence_no INTEGER);''')
-    cursor.execute('''DELETE FROM words''')
-    cursor.execute('''DROP INDEX IF EXISTS word_index''')
+    for db_name in databases:
+        connection = get_connection(db_name=db_name)
+        cursor = connection.cursor()
+        cursor.execute('''CREATE TABLE IF NOT EXISTS words( word TEXT, sentence_no INTEGER, file_no INTEGER);''')
+        cursor.execute('''DELETE FROM words''')
+        cursor.execute('''DROP INDEX IF EXISTS word_index''')
+        connection.commit()
+        connection.close()
     return True
 
 
@@ -101,12 +122,45 @@ def insert_word_rows(connection, word_rows):
     """
     Insert words into database in a bulk insert.
 
-    word_rows = [(word, sentence_no), (word, sentence_no), ...]
+    word_rows = [(word, sentence_no, file_no), (word, sentence_no, file_no), ...]
 
     """
-    connection.executemany('''INSERT INTO words VALUES (?,?)''', word_rows)
+    connection.executemany('''INSERT INTO words VALUES (?,?,?)''', word_rows)
     connection.commit()
     return True
+
+
+def combine_database_files(databases):
+    """
+    Combine all the database files into one database, return name of main database
+    """
+    sorted(databases)
+    conn = get_connection(db_name=databases[0])
+    cursor = conn.cursor()
+    for db in databases[1:]:
+        
+
+        # get current db count
+        cursor.execute('''SELECT count(*) from words''')
+        sentences_so_far = cursor.fetchone()[0]
+
+        # update sentence count in current db
+        temp_conn = get_connection(db_name=db)
+        temp_cursor = temp_conn.cursor()
+        temp_cursor.execute('''UPDATE words SET sentence_no = sentence_no + ?''', [sentences_so_far])
+        temp_conn.commit()
+        temp_conn.close()
+
+        # attach next db to main db
+        db2_name = 'db' + str(uuid4()).replace('-','')[:6]
+        cursor.execute('''ATTACH ? AS ?;''', [db, db2_name])
+        cursor.execute('INSERT INTO main.words SELECT * FROM {}.words;'.format(db2_name) )
+        conn.commit()
+
+    conn.close()
+
+    return databases[0]
+    
 
 
 def add_index_to_db(cursor):
@@ -115,7 +169,7 @@ def add_index_to_db(cursor):
     return True
 
 
-def read_in_chunks(file_object, chunk_size=1024):
+def read_in_chunks(file_object, chunk_size=CHUNK_SIZE):
     """Generator to read a file piece by piece."""
     while True:
         data = file_object.read(chunk_size)
@@ -124,24 +178,8 @@ def read_in_chunks(file_object, chunk_size=1024):
         yield data
 
 
-def add_sentence_to_word_rows(sentence, word_rows, sentence_no):
+def add_sentence_to_word_rows(sentence, word_rows, sentence_no, file_no):
 
-    def add_word(token):
-        # make sure token is not punctuation
-        if (len(token) == 1 and token.pos_ == 'PUNCT') or (len(token) == 3 and token.pos_ == 'PUNCT'):
-            pass
-        else: # token is word
-            # standard case the word and remove whitespace
-            word = str(token).lower().strip()
-            # add the word to batch insert list (if word is not the empty string)
-            if word:
-                word_rows.append([word, sentence_no])
-
-    results = pool.map(add_word, nlp(sentence))
-
-
-    '''
-    #old
     for token in nlp(sentence):
         # make sure token is not punctuation
         if (len(token) == 1 and token.pos_ == 'PUNCT') or (len(token) == 3 and token.pos_ == 'PUNCT'):
@@ -151,14 +189,18 @@ def add_sentence_to_word_rows(sentence, word_rows, sentence_no):
             word = str(token).lower().strip()
             # add the word to batch insert list (if word is not the empty string)
             if word:
-                word_rows.append([word, sentence_no])
-    '''
+                word_rows.append([word, sentence_no, file_no])
+
+    return True
 
 
-def add_data_to_db(filename, connection):
+def add_data_to_db(filename_and_file_no):
     """
+    kwargs are filename and file_no
     Read data from file and populate words table - returns number of sentences analyzed
     """
+    filename, file_no = filename_and_file_no
+    connection = get_connection(file_no=file_no)
     
     with open(filename, 'r') as f:
 
@@ -184,7 +226,7 @@ def add_data_to_db(filename, connection):
             for s in sents[:-1]:
                 sentence_no += 1
                 # add sentence to db
-                add_sentence_to_word_rows(s, word_rows, sentence_no)
+                add_sentence_to_word_rows(s, word_rows, sentence_no, file_no)
             
             if len(word_rows) >= BULK_INSERT_SIZE:
                 insert_word_rows(connection, word_rows)
@@ -193,16 +235,20 @@ def add_data_to_db(filename, connection):
 
     if word_rows: # insert leftovers into word rows, then left over word rows into db
         sentence_no += 1
-        add_sentence_to_word_rows(leftovers, word_rows, sentence_no)
+        add_sentence_to_word_rows(leftovers, word_rows, sentence_no, file_no)
         insert_word_rows(connection, word_rows)
 
 
     # insert final 'fake' word row # TODO: this is odd
-    insert_word_rows(connection, [['z'*25, 0]])
+    insert_word_rows(connection, [['z'*25, 0, file_no]])
 
+    connection.commit()
+    connection.close()
     return sentence_no
 
 def integer_to_letter(integer):
+    """Solution for properly numbering a file alphabetically"""
+
     alph = 'abcdefghijklmnopqrstuvwxyz'
     multiplier = math.ceil(integer / 26.0)
     letter = integer - (multiplier-1)*26
@@ -213,13 +259,14 @@ def integer_to_letter(integer):
 
 def print_db(cursor, outputfile=None):
     """Prints database contents according to problem specs"""
+
     last_word = None
     occurrence_list = []
     line_no = 0
     if outputfile:
         f = open(outputfile, 'w')
 
-    for row in cursor.execute('''SELECT word,sentence_no FROM words ORDER BY word;'''):
+    for row in cursor.execute('''SELECT word,sentence_no,file_no FROM words ORDER BY word;'''):
 
         if last_word and (row[0] != last_word): # print when the word switches (last word is fake word)
             line_no += 1
@@ -246,6 +293,50 @@ def print_db(cursor, outputfile=None):
     return True
 
 
+def split_file(filename):
+    """
+    Split a file into a few files and return the new filenames
+    """
+    # open a file for each thread
+    open_files = []
+    fid = 1
+    for x in range(0, NUMBER_OF_THREADS):
+        f = open('___generated___.%d' %fid, 'w')
+        open_files.append(f)
+        fid += 1
+
+    filesize = os.path.getsize(filename)
+    new_filesize = int(math.ceil(filesize / float(NUMBER_OF_THREADS)))
+
+    with open(filename, 'r') as f:
+        # final sentence may not be a complete sentence, save and prepend to next chunk
+        leftovers = ''
+        sentence_no = 0
+        current_file = 0
+        # store batch word inserts here
+        word_rows = []
+        for chunk in read_in_chunks(f): # lazy way of reading our file in case it's large
+
+            # prepend leftovers to chunk
+            chunk = leftovers + chunk
+
+            # current file is too large
+            if os.path.getsize(open_files[current_file].name) > new_filesize:
+                doc = nlp(chunk)
+                sents = [sent.string.strip() for sent in doc.sents]
+                leftovers = sents[-1]
+                open_files[current_file].write(' '.join(sents[:-1]))
+                current_file += 1
+            else: # middle of file
+                open_files[current_file].write(chunk)
+
+    # close all open files
+    new_filenames = []
+    for f in open_files:
+        new_filenames.append(f.name)
+        f.close()
+
+    return new_filenames
 
 
 
@@ -266,58 +357,39 @@ if __name__ == '__main__':
 
     logging.info('Loading NLP...')
     nlp = spacy.load('en') # takes a while, handle possible error first
+    database_names = get_database_names()
 
     logging.info('Preparing database...')
-    connection = get_connection()
-    cursor = connection.cursor()
-    create_words_table(cursor)
+    create_words_tables(database_names)
+
+    logging.info('Splitting files for multithreading...')
+    filenames = split_file(filename)
+    filenames_to_sentences = {}
+    for fn in filenames:
+        filenames_to_sentences[fn] = None
 
 
     logging.info('Adding data to database...')
-    # could this portion be sped up by threading? 
-    # Problem is keeping track of sentence numbers
-    # File could be split in x pieces for nlp
-    sentences = add_data_to_db(filename, connection)
+    file_info_arrays = [(fn, int(fn.split('.')[-1])) for fn in filenames]
+    sentences = pool.map(add_data_to_db, file_info_arrays)
 
+    logging.info('Combining database files...')
+    main_db_name = combine_database_files(database_names)
+
+    # combine databases
     logging.info('Indexing database...')
+    conn = get_connection(db_name=main_db_name)
+    cursor = conn.cursor()
     add_index_to_db(cursor)
-    connection.commit() # final commit
+    conn.commit() # final commit
 
     if outputfile:
         print_db(cursor, outputfile)
     else:
         print_db(cursor)
 
-    connection.close() # close db connection
+    conn.close() # close db connection
 
     total_time = round((datetime.now() - start_time).total_seconds(), 2)
-    print('success!!\n\nAnalyzed {} sentences in {} seconds.'.format(sentences, total_time))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    print('success!!\n\nAnalyzed {} sentences in {} seconds.'.format(sum(sentences), total_time))
 
