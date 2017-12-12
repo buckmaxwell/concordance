@@ -68,6 +68,9 @@ $ python concordance.py input.txt output.txt
 
 7.  When the concordance program is done running, it will print success.  Check out the output file to see the generated content.
 
+```
+On a low memory machine, this concordance generator was able to produce a concordance for a 350 page book in under a minute!
+```
 
 # How we solved it
 
@@ -113,4 +116,12 @@ By using a message passing system (rabbitmq) we allow our workers to potentially
 one another.  We also allow ourselves to "infinitely" scale.  In reality, we are currently inhibited by the 
 number 10, the number of databases sqlite allows you to attach to a database.  If 10 was ever not enough,
 moving off of sqlite to a production database would be the correct move. For now though, SQLite has the advantage of ease.
+
+
+# Testing and the future
+
+In order to improve this project, rigorous testing is needed.  The test plan includes integration tests
+comparing output to a much greater number of concordances known to be working properly.  It also
+includes unit test for all custom methods.
+
 

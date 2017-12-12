@@ -84,8 +84,6 @@ def add_data_to_db(filename, file_no):
         add_sentence_to_word_rows(leftovers, word_rows, sentence_no, file_no)
         insert_word_rows(connection, word_rows)
 
-
-    # insert final 'fake' word row # TODO: this is odd
     insert_word_rows(connection, [['z'*25, 0, file_no]])
 
     connection.commit()
@@ -100,7 +98,7 @@ def handle_message(ch, method, properties, body):
         print('done')
         ch.basic_ack(delivery_tag=method.delivery_tag)
         q = channel.queue_declare(queue='completed')
-        channel.basic_publish(exchange='', routing_key='completed', body=str(sentence_no))
+        channel.basic_publish(exchange='', routing_key='completed', body=str(sentence_no)       )
 
 
 if __name__ == '__main__':

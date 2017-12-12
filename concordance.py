@@ -53,7 +53,7 @@ def combine_database_files(databases):
         
 
         # get current db count
-        cursor.execute('''SELECT count(*) from words''')
+        cursor.execute('''SELECT MAX(sentence_no) from words''')
         sentences_so_far = cursor.fetchone()[0]
 
         # update sentence count in current db
@@ -199,13 +199,6 @@ if __name__ == '__main__':
 
     logging.info('Splitting files for multithreading...')
     filenames = split_file(filename)
-    '''
-    REMOVE
-    filenames_to_sentences = {}
-    for fn in filenames:
-        filenames_to_sentences[fn] = None
-    '''
-
 
     logging.info('Adding data to database...')
     # use message passing so that different workers can share work
@@ -221,18 +214,6 @@ if __name__ == '__main__':
 
     
     # Unacknowledged message count?
-    #print(q.method.consumer_count)
-    #while q.method.consumer_count > 0:
-    #    time.sleep(1)
-
-    # wait until all workers are finished
-    #r = requests.get('http://guest:guest@localhost:15672/api/queues/%2f/filename_queue')
-    #unacked = json.loads(r.text)['messages_unacknowledged_ram']
-    #while unacked > 0:
-    #    time.sleep(2)
-    #    r = requests.get('http://guest:guest@localhost:15672/api/queues/%2f/filename_queue')
-    #    unacked = json.loads(r.text)['messages_unacknowledged_ram']
-
     completed = 0
     sentences = []
     q = channel.queue_declare(queue='completed')
