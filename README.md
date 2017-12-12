@@ -84,7 +84,7 @@ of loading libraries like pika, and passing messages slows things down.
 
 There are many choices for natural language processing.  NLTK is a popular one, as is spaCy.  We went with spacy for its speed benefits over NLTK, pictured below.
 
-[graphic](timing.png)
+![graphic](timing.png)
 
 NOTE: Natural language processors make different decisions about contractions.  Both spaCy and NLTK choose
 to handle contractions as multiple words, because contractions are really, two words.  We have chosen to 
