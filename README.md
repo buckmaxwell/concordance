@@ -61,9 +61,9 @@ $ pip install -r requirements.txt
 ```sh
 $ python add_data_worker.py
 ```
-6. Start the concordance program, suppy input filename and output filename
+6. Start the concordance program, supply input filename and output filename
 ```sh
-$ python concordance.py input.txt output.txt
+$ python concordance.py tests/test1.txt output.txt
 ```
 
 7.  When the concordance program is done running, it will print success.  Check out the output file to see the generated content.
@@ -80,7 +80,7 @@ very large -- say the Encyclopedia Britanica.  By taking the approach we did, we
 handle large documents, but it also slows down the process for smaller documents - namely because the process
 of loading libraries like pika, and passing messages slows things down.
 
-# Using spaCy
+## Using spaCy
 
 There are many choices for natural language processing.  NLTK is a popular one, as is spaCy.  We went with spacy for its speed benefits over NLTK, pictured below.
 
@@ -118,11 +118,36 @@ one another.  We also allow ourselves to "infinitely" scale.  In reality, we are
 number 10, the number of databases sqlite allows you to attach to a database.  If 10 was ever not enough,
 moving off of sqlite to a production database would be the correct move. For now though, SQLite has the advantage of ease.
 
-
-# Testing and the future
+## Testing and the future
 
 In order to improve this project, rigorous testing is needed.  The test plan includes integration tests
-comparing output to a much greater number of concordances known to be working properly.  It also
+comparing output to a much greater number of concordances known to be properly formatted.  It also
 includes unit test for all custom methods.
+
+If this program were used in production, some things could be changed to make it more user friendly, for
+example,
+
+	- the alphabetical line numbers in the concordance become unreadable very quickly for large input 
+	files.  Perhaps integers would be more intuitive.
+
+	- running rabbitmq and a set of add_data_workers on a centralized server would allow easier distribution of the program, and a smaller install and setup process for end users.
+
+	- Continuous Integration could be set up with a proper Python PEP 8 linter, and unit and integration
+	tests that must run before any build is pushed into production.
+
+	- Better logging, including shipping logs to logstash and using the ELK stack or another tool to monitor
+	program logs.
+
+	- A refactor that includes removing misleading variable names like NUMBER_OF_THREADS (which are remnants 
+	of the programs past), as well as creating doc strings that allow for automatically generated documentation.
+
+
+
+
+
+
+
+
+
 
 

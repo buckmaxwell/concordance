@@ -1,7 +1,6 @@
 #!/usr/bin/env python3.6
 
 from datetime import datetime
-from multiprocessing.dummy import Pool as ThreadPool
 from helpers import read_in_chunks, get_connection
 from uuid import uuid4
 from constants import *
@@ -17,9 +16,7 @@ import os
 import json
 
 
-
 logging.basicConfig(level=logging.INFO)
-pool = ThreadPool(NUMBER_OF_THREADS) # create threadpool
 
 def get_database_names():
     """Return a list of database names"""
